@@ -1,115 +1,155 @@
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-const width = canvas.width;
-const height = canvas.height;
+const w = canvas.width;
+const h = canvas.height;
 
-let lastKey = null;
 let speed = 0;
 let balance = 100;
-let distance = 0;
-let startTime = null;
+let lastKey = null;
+let start = null;
 let finished = false;
 
-const gates = [];
-const gateSpacing = 150;
-const gateWidth = 100;
+let playerX = 0; // -1 to 1
+const playerSpeed = 0.02;
 
-for (let i = 1; i <= 10; i++) {
+// Create gates and trees in "3D"
+const gates = [];
+const trees = [];
+
+for (let i = 0; i < 20; i++) {
   gates.push({
-    x: width / 2 + (Math.random() * 400 - 200),
-    y: i * gateSpacing,
+    z: i * 200 + 500,
+    x: Math.random() * 2 - 1,
     hit: false
   });
 }
 
-const player = {
-  x: width / 2,
-  y: height - 80,
-  size: 20
-};
+for (let i = 0; i < 50; i++) {
+  trees.push({
+    z: i * 150 + 300,
+    side: Math.random() > 0.5 ? -1 : 1,
+    x: Math.random() * 2 - 1
+  });
+}
+
+function project(x, z) {
+  // Simple perspective projection
+  const depth = 0.0008;
+  const scale = 1 / (z * depth + 0.0001);
+  const screenX = w / 2 + x * w * scale;
+  const screenY = h - z * scale * 0.8;
+  return { screenX, screenY, scale };
+}
 
 function drawSlope() {
+  // Draw snow ground
   ctx.fillStyle = "#aee8ff";
-  ctx.fillRect(0, 0, width, height);
+  ctx.fillRect(0, 0, w, h);
 
-  // Draw finish line
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 50, width, 5);
+  // Draw 3D trees
+  trees.forEach(t => {
+    const p = project(t.x + t.side * 1.2, t.z);
+    const size = 20 * p.scale * 15;
+    ctx.fillStyle = "#0a7b2b";
+    ctx.fillRect(p.screenX - size / 2, p.screenY - size, size, size);
+  });
 
   // Draw gates
-  gates.forEach(gate => {
-    if (!gate.hit) {
+  gates.forEach(g => {
+    const p = project(g.x, g.z);
+    if (!g.hit && p.scale > 0) {
+      const gateWidth = 120 * p.scale * 15;
+      const gateHeight = 8;
       ctx.fillStyle = "red";
-      ctx.fillRect(gate.x - gateWidth / 2, gate.y - 10, gateWidth, 5);
+      ctx.fillRect(p.screenX - gateWidth / 2, p.screenY - gateHeight, gateWidth, gateHeight);
     }
   });
+
+  // Finish line
+  const finish = project(0, gates[gates.length - 1].z + 200);
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, finish.screenY, w, 6);
 }
 
 function drawPlayer() {
-  ctx.fillStyle = "#000";
-  ctx.fillRect(player.x - player.size / 2, player.y - player.size / 2, player.size, player.size);
+  // Player stays in center but x moves left/right
+  const p = project(playerX, 100);
+  ctx.fillStyle = "black";
+  ctx.fillRect(p.screenX - 15, p.screenY - 25, 30, 30);
 }
 
 function updateUI(time) {
-  document.getElementById("score").innerText = `Time: ${time.toFixed(2)}`;
-  document.getElementById("speed").innerText = `Speed: ${Math.max(0, Math.round(speed))}`;
-}
-
-function gameOver() {
-  finished = true;
-  document.getElementById("hint").innerText = "Finished! Press R to restart.";
+  document.getElementById("time").innerText = `Time: ${time.toFixed(2)}`;
+  document.getElementById("speed").innerText = `Speed: ${Math.round(speed)}`;
 }
 
 function resetGame() {
-  lastKey = null;
   speed = 0;
   balance = 100;
-  distance = 0;
-  startTime = null;
+  lastKey = null;
+  start = null;
   finished = false;
+  document.getElementById("hint").innerText = "Press A/D or ←/→";
 
-  gates.forEach(gate => {
-    gate.hit = false;
-    gate.y = gate.y;
+  gates.forEach((g, i) => {
+    g.z = i * 200 + 500;
+    g.hit = false;
+    g.x = Math.random() * 2 - 1;
   });
 
-  document.getElementById("hint").innerText = "Press A/D or ←/→ to ski";
+  trees.forEach((t, i) => {
+    t.z = i * 150 + 300;
+    t.x = Math.random() * 2 - 1;
+  });
 }
 
 function update(dt) {
   if (finished) return;
 
-  if (!startTime) startTime = performance.now();
+  if (!start) start = performance.now();
 
-  // Move slope up based on speed
-  distance += speed * dt * 0.001;
+  // Speed increases when alternating keys correctly
+  // speed decreases when wrong
+  if (speed < 0) speed = 0;
 
-  // Balance penalty if too fast and not alternating correctly
-  if (balance <= 0) {
-    speed -= 1;
-    balance = 0;
-  }
+  // Move all objects toward the player
+  gates.forEach(g => g.z -= speed * dt * 0.01);
+  trees.forEach(t => t.z -= speed * dt * 0.01);
 
   // Check gates
-  gates.forEach(gate => {
-    if (!gate.hit && distance >= gate.y - 50 && distance <= gate.y + 50) {
-      gate.hit = true;
-      speed += 0.5;
+  gates.forEach(g => {
+    if (!g.hit && g.z < 120 && g.z > 80) {
+      if (Math.abs(g.x - playerX) < 0.3) {
+        g.hit = true;
+        speed += 1;
+      } else {
+        speed -= 3;
+      }
     }
   });
 
   // Finish condition
-  if (distance >= gates[gates.length - 1].y + 100) {
-    const time = (performance.now() - startTime) / 1000;
-    updateUI(time);
-    gameOver();
+  if (gates[gates.length - 1].z < 80) {
+    finished = true;
+    document.getElementById("hint").innerText = "Finished! Press R to restart.";
   }
-}
 
-function render() {
-  drawSlope();
-  drawPlayer();
+  // If objects pass behind player, reset them to front
+  gates.forEach(g => {
+    if (g.z < 0) {
+      g.z = gates[gates.length - 1].z + 200;
+      g.hit = false;
+      g.x = Math.random() * 2 - 1;
+    }
+  });
+
+  trees.forEach(t => {
+    if (t.z < 0) {
+      t.z = trees[trees.length - 1].z + 150;
+      t.x = Math.random() * 2 - 1;
+    }
+  });
 }
 
 function loop(timestamp) {
@@ -117,9 +157,12 @@ function loop(timestamp) {
   loop.last = timestamp;
 
   update(dt);
-  render();
 
-  const time = startTime ? (timestamp - startTime) / 1000 : 0;
+  ctx.clearRect(0, 0, w, h);
+  drawSlope();
+  drawPlayer();
+
+  const time = start ? (timestamp - start) / 1000 : 0;
   updateUI(time);
 
   requestAnimationFrame(loop);
@@ -132,31 +175,33 @@ window.addEventListener("keydown", (e) => {
   }
 
   const key = e.key.toLowerCase();
-
   if (key === "a" || key === "arrowleft") {
     if (lastKey !== "left") {
-      speed += 1.2;
-      balance = Math.min(100, balance + 3);
+      speed += 2;
+      balance = Math.min(100, balance + 2);
     } else {
-      speed -= 1;
+      speed -= 2;
       balance -= 10;
     }
     lastKey = "left";
-    player.x -= 10;
+    playerX -= playerSpeed;
   }
 
   if (key === "d" || key === "arrowright") {
     if (lastKey !== "right") {
-      speed += 1.2;
-      balance = Math.min(100, balance + 3);
+      speed += 2;
+      balance = Math.min(100, balance + 2);
     } else {
-      speed -= 1;
+      speed -= 2;
       balance -= 10;
     }
     lastKey = "right";
-    player.x += 10;
+    playerX += playerSpeed;
   }
+
+  // Keep player within bounds
+  if (playerX < -1) playerX = -1;
+  if (playerX > 1) playerX = 1;
 });
 
 requestAnimationFrame(loop);
-
